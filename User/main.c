@@ -1,166 +1,236 @@
 #include "stm32f10x.h"                  // Device header
 #include "Delay.h"
 #include "OLED.h"
-#include "Timer.h"
-#include "Key.h"
 #include "Motor.h"
+#include "Key.h"
 #include "Encoder.h"
+#include "Timer.h"
 #include "Serial.h"
-#include <stdlib.h>
-#include <string.h>
 
-uint8_t KeyNum;
-volatile uint32_t system_tick=0;
+int32_t speed=0;
+float actural1,target1,out1,actural2,target2,out2;
+float kp=0.8,ki=0.1,kd=0.05;
+float error01,error11,errorint1,error02,error12,errorint2,errorint3;
+float out1,out2=0;
+int8_t mode=0,keynum=1,state=0;
+float angle1, angle2;           // 电机角度（编码器读数）
+float target_angle1, target_angle2;
+float angle_offset = 0;                  // 角度偏移量
 
-/*定义变量*/
-float Target1=0, Actual1, Out1;	//目标值，实际值，输出值
-float Target2=0, Actual2, Out2;	//目标值，实际值，输出值
-float Kp1=0.5f, Ki1=0.1f, Kd1=0.02f;					//比例项，积分项，微分项的权重
-float Kp2=0.5f, Ki2=0.1, Kd2=0.02;					//比例项，积分项，微分项的权重
-float Error0_1, Error1_1, ErrorInt_1;		//本次误差，上次误差，误差积分
-float Error0_2, Error1_2, ErrorInt_2;	//本次误差，上次误差，误差积分
-uint32_t position1=0,position2=0;
-uint8_t receiving_command=0;
-int16_t delta1;
-int16_t delta2;
+// 编码器相关变量
+int32_t encoder1_total = 0, encoder2_total = 0;
+int32_t encoder1_last = 0, encoder2_last = 0;
 
-typedef enum {
-	TASK_SPEED__CONTROL=0,
-	TASK_FOLLOW_CONTROL=1
-}TASK_Mode_t;
+#define ANGLE_SCALE 0.1f  // 角度缩放系数，可根据需要调整
 
-TASK_Mode_t current_task=TASK_SPEED__CONTROL;
-
-
-void SysTick_Init(void)
+uint8_t anjian(void)
 {
-	SysTick_Config(SystemCoreClock/1000);    //1ms中断
+    // 直接读取所有按键状态
+    if (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_0) == 0) return 0;
+    return 1;
 }
 
-void SysTick_Handler(void)
+void anjian1(void)
 {
-	system_tick++;
-	Key_Tick();
+    static uint8_t count = 0;
+    static uint8_t last_state = 0;
+    static uint8_t current_state = 0;
+    
+    count++;
+    if(count >= 2)  // 每20ms检测一次（10ms定时器×2）
+    {
+        count = 0;
+        
+        last_state = current_state;
+        current_state = anjian();  // 读取当前所有按键状态
+        
+        // 按键释放时触发
+        if(current_state == 1 && last_state == 0)
+        {
+            keynum = last_state;
+        }
+    }
 }
-		
-int main(void)
+
+uint8_t keyget(void)
 {
-	/*模块初始化*/
-	OLED_Init();		//OLED初始化
-	Key_Init();			//非阻塞式按键初始化
-	Motor_Init();		//电机初始化
-	Encoder_Init();		//编码器初始化
-	Serial_Init();		//串口初始化，波特率9600
-	Timer_Init();		//定时器初始化，定时中断时间1ms
-	SysTick_Init();
-	
-	while (1)
+	uint8_t t;
+	t=keynum;
+	keynum=1;
+	return t;
+}
+
+void botton(void)
+{
+	if(keyget()==0)
 	{
-		KeyNum=Key_GetNum();
-		if(KeyNum==1)
+		if(mode==0)
 		{
-			current_task=(current_task==TASK_SPEED__CONTROL)?TASK_FOLLOW_CONTROL:TASK_SPEED__CONTROL;
-			Target1=0;
-			Target2=0;
-			ErrorInt_1=0;
-			ErrorInt_2=0;
-			position1=0;
-			position2=0;
+			mode=1;
+			errorint3=0;
+			target_angle1 = angle1;  // 保持当前位置
+            target_angle2 = angle1;  // 电机2跟随电机1
 		}
-		if(current_task==TASK_SPEED__CONTROL){
-			Out2=0;
-			Motor2_SetPWM(0);
-			if(Serial_GetRxFlag()==1){
-				if(strstr(Serial_RxPacket,"speed%")!=NULL){
-					sscanf(Serial_RxPacket,"speed%%%f",&Target1);
-					Serial_Printf("Set_Speed:%d\r\n",(int)Target1);
-				}else{
-					Serial_SendString("ERROR\r\n");
-				}
-			}
-			OLED_ShowString(1,1,"Speed Control",OLED_8X16);
-			Serial_Printf("%f,%f,%f\n",Target1,Actual1,Out1);
-			OLED_Update();
-		}
-		if(current_task==TASK_FOLLOW_CONTROL){
-			Out1=0;
-			Motor1_SetPWM(0);
-			OLED_ShowString(1,1,"Speed Follow",OLED_8X16);
-			OLED_ShowNum(4,2,delta2,5,OLED_8X16);
-
-			Serial_Printf("%f,%f,%f\n",Target2,Actual2,Out2);
-			OLED_Update();
+		else
+		{
+			mode=0;
+			target_angle1 = angle1;
+            target_angle2 = angle2;
 		}
 	}
 }
 
-void TIM1_UP_IRQHandler(void)//10ms执行一次
+void TIM4_IRQHandler(void)
 {
-	/*定义静态变量（默认初值为0，函数退出后保留值和存储空间）*/
-	static uint16_t Count;		
+	if (TIM_GetITStatus(TIM4, TIM_IT_Update) == SET)
+	{
+		anjian1();
+		state=1;
+		TIM_ClearITPendingBit(TIM4, TIM_IT_Update);
+	}
+}
 
-	if (TIM_GetITStatus(TIM1, TIM_IT_Update) == SET)
-	{	
-		Key_Tick();
-		Count++;
-		if(Count>=10)
+void setspeed(void)
+{
+	if(Serial_RxFlag == 1)
+	{
+		target1=data();
+		target2=target1;
+	}
+}
+
+// 获取编码器相对角度（处理溢出）
+float GetEncoderAngle(int32_t current_count, int32_t* last_count, int32_t* total_count)
+{
+    int32_t delta;
+    
+    // 计算增量，处理溢出
+    delta = current_count - *last_count;
+    if(delta > 32767) delta -= 65536;    // 向下溢出
+    else if(delta < -32768) delta += 65536; // 向上溢出
+    
+    // 更新累计值
+    *total_count += delta;
+    *last_count = current_count;
+    
+    // 返回相对角度（不是绝对角度）
+    return *total_count * ANGLE_SCALE;
+}
+
+// 角度归一化到-180到180度范围（相对角度）
+float NormalizeRelativeAngle(float angle)
+{
+    // 对于相对角度，我们保持连续值，不需要归一化到0-360
+    // 这样可以避免在0/360边界处跳变
+    return angle;
+}
+
+// 计算角度误差（相对角度）
+float AngleError(float target, float actual)
+{
+    float error = target - actual;
+    
+    // 对于相对角度，不需要考虑圆周特性
+    // 直接返回误差
+    return error;
+}
+
+// 位置PID计算
+void Position_PID_Calculate(void)
+{
+    // 电机1位置PID
+    error11 = error01;
+    error01 = AngleError(target_angle1, angle1);
+    errorint1 += error01;
+	// 积分限幅
+    if(errorint1 > 1000) errorint1 = 1000;
+    if(errorint1 < -1000) errorint1 = -1000;
+	
+	out1 = kp * error01 + ki * errorint1 + kd * (error01 - error11);
+	
+	if (error01<1)
+	{
+		out1=0;		
+	}
+
+	error12 = error02;
+	target_angle2=angle1;
+    error02 = AngleError(target_angle2, angle2);
+    errorint2 += error02;
+	
+	// 积分限幅
+    if(errorint2 > 1000) errorint2 = 1000;
+    if(errorint2 < -1000) errorint2 = -1000;
+    
+    out2 = kp * error02 + ki * errorint2 + kd * (error02 - error12);
+    
+    // 输出限幅
+    if(out1 > 100) out1 = 100;
+    if(out1 < -100) out1 = -100;
+    if(out2 > 100) out2 = 100;
+    if(out2 < -100) out2 = -100;
+	
+}
+
+int main(void)
+{
+	/*模块初始化*/
+	OLED_Init();		//OLED初始化
+	Motor_Init();		//直流电机初始化
+	Key_Init();			//按键初始化
+	Encoder1_Init();
+	Encoder2_Init();
+	Timer_Init();
+	Serial_Init();
+	int time=0;
+	
+	
+	while (1)
+	{
+		if (Serial_GetRxFlag()==1){
+			speed=data();
+			printf("%d\n",speed);
+		}
+		botton();
+		setspeed();
+		
+		if (mode==0&&state==1)
 		{
-		/*获取实际速度值*/
-		/*Encoder_Get函数，可以获取两次读取编码器的计次值增量*/
-		/*此值正比于速度，所以可以表示速度，但它的单位并不是速度的标准单位*/
-		/*此处每隔40ms获取一次计次值增量，电机旋转一周的计次值增量约为408*/
-		/*因此如果想转换为标准单位，比如转/秒*/
-		/*则可将此句代码改成Actual = Encoder_Get() / 408.0 / 0.04;*/
-			delta1 = Encoder1_Get();
+			OLED_ShowString(1,1,"mode1");
+			state = 0;
+			time++;
+			if (time%200==0)errorint1=30;
+			// 读取编码器角度
+			angle1 = GetEncoderAngle(Encoder1_Get(), &encoder1_last, &encoder1_total);
+			angle2 = GetEncoderAngle(Encoder2_Get(), &encoder2_last, &encoder2_total);
+    
 			
-			delta2 = Encoder2_Get();
-			Actual1=delta1;
-			Actual2=delta2;
-			position1+=delta1;
-			position2+=delta2;
-			if(current_task==TASK_SPEED__CONTROL){
-			Count=0;
-			/*获取本次误差和上次误差*/
-			Error1_1 = Error0_1;			//获取上次误差
-			Error0_1 = Target1 - Actual1;	//获取本次误差，目标值减实际值，即为误差值
+			Position_PID_Calculate();
 			
-			/*误差积分（累加）*/
-			/*如果Ki不为0，才进行误差积分，这样做的目的是便于调试*/
-			/*因为在调试时，我们可能先把Ki设置为0，这时积分项无作用，误差消除不了，误差积分会积累到很大的值*/
-			/*后续一旦Ki不为0，那么因为误差积分已经积累到很大的值了，这就导致积分项疯狂输出，不利于调试*/
-			if (Ki1 != 0)				//如果Ki不为0
-			{
-				ErrorInt_1 += Error0_1;		//进行误差积分
-			}
-			else						//否则
-			{
-			ErrorInt_1 = 0;			//误差积分直接归0
-			}
-				/*PID计算*/
-			/*使用位置式PID公式，计算得到输出值*/
-			Out1 = Kp1 * Error0_1 + Ki1 * ErrorInt_1 + Kd1 * (Error0_1 - Error1_1);
-			/*输出限幅*/
-			if (Out1 > 100) {Out1 = 100;}		//限制输出值最大为100
-			if (Out1 < -100) {Out1 = -100;}	//限制输出值最小为100
-			Motor1_SetPWM(Out1);
-			}else if(current_task==TASK_FOLLOW_CONTROL){
-				Count=0;
-				Error1_2=Error0_2;
-				Error0_2=position1-position2;
-					if (Ki1 != 0)				//如果Ki不为0
-				{
-					ErrorInt_2 += Error0_2;		//进行误差积分
-				}
-				else						//否则
-				{
-				ErrorInt_2 = 0;			//误差积分直接归0
-				}
-				Out2=Kp2 * Error0_2 + Ki2 * ErrorInt_2 + Kd2 * (Error0_2 - Error1_2);
-				if (Out2 > 100) {Out2 = 100;}		//限制输出值最大为100
-				if (Out2 < -100) {Out2 = -100;}	//限制输出值最小为100
-				Motor2_SetPWM(Out2);			
-			}
-			TIM_ClearITPendingBit(TIM1, TIM_IT_Update);
+			
+			Motor_SetSpeed2(out1);
+			
+			
+			Motor_SetSpeed1(0);
+			printf("%f\n",out1);
+    
+			
+		}else if(mode==1&&state==1)
+		{
+			OLED_ShowString(1,1,"mode2");
+			Motor_SetSpeed2(0);
+			target1=data();
+			state=0;
+			actural1=Encoder1_Get();
+			error11=error01;
+			error01=target1-actural1;
+			errorint1+=error01;
+			out1=kp*error01+ki*errorint1+kd*(error01-error11);
+			if(out1>100)out1=100;
+			if(out1<-100)out1=-100;
+			Motor_SetSpeed1(out1);
+			printf("%f\n",actural1);
+			
 		}
 	}
 }
