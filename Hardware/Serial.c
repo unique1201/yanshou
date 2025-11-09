@@ -2,9 +2,11 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-uint8_t Serial_RxData;		//定义串口接收的数据变量
-uint8_t Serial_RxFlag;		//定义串口接收的标志位变量
-char Serial_RxPacket[100];
+char Serial_RxPacket[100];				//定义接收数据包数组，数据包格式"@MSG\r\n"
+uint8_t Serial_RxFlag;					//定义接收数据包标志位
+int32_t length;
+
+
 /**
   * 函    数：串口初始化
   * 参    数：无
@@ -30,13 +32,13 @@ void Serial_Init(void)
 	
 	/*USART初始化*/
 	USART_InitTypeDef USART_InitStructure;					//定义结构体变量
-	USART_InitStructure.USART_BaudRate = 9600;              //波特率
-	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;	//硬件流控制，不需要rdwareFlowControl_None;
-	USART_InitStructure.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;	//模式，发送模式和接收模式均选择ode_Rx;
-	USART_InitStructure.USART_Parity = USART_Parity_No;     //奇偶校验，不需要
-	USART_InitStructure.USART_StopBits = USART_StopBits_1;  //停止位，选择1位
-	USART_InitStructure.USART_WordLength = USART_WordLength_8b;		//字长，选择8位8b;
-	USART_Init(USART1, &USART_InitStructure);               //将结构体变量交给USART_Init，配置USART1
+	USART_InitStructure.USART_BaudRate = 9600;				//波特率
+	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;	//硬件流控制，不需要
+	USART_InitStructure.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;	//模式，发送模式和接收模式均选择
+	USART_InitStructure.USART_Parity = USART_Parity_No;		//奇偶校验，不需要
+	USART_InitStructure.USART_StopBits = USART_StopBits_1;	//停止位，选择1位
+	USART_InitStructure.USART_WordLength = USART_WordLength_8b;		//字长，选择8位
+	USART_Init(USART1, &USART_InitStructure);				//将结构体变量交给USART_Init，配置USART1
 	
 	/*中断输出配置*/
 	USART_ITConfig(USART1, USART_IT_RXNE, ENABLE);			//开启串口接收数据的中断
@@ -46,11 +48,11 @@ void Serial_Init(void)
 	
 	/*NVIC配置*/
 	NVIC_InitTypeDef NVIC_InitStructure;					//定义结构体变量
-	NVIC_InitStructure.NVIC_IRQChannel = USART1_IRQn;       //选择配置NVIC的USART1线
-	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;         //指定NVIC线路使能
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;		//指定NVIC线路的抢占优先级为1;
-	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;      //指定NVIC线路的响应优先级为1
-	NVIC_Init(&NVIC_InitStructure);                         //将结构体变量交给NVIC_Init，配置NVIC外设
+	NVIC_InitStructure.NVIC_IRQChannel = USART1_IRQn;		//选择配置NVIC的USART1线
+	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;			//指定NVIC线路使能
+	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;		//指定NVIC线路的抢占优先级为1
+	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;		//指定NVIC线路的响应优先级为1
+	NVIC_Init(&NVIC_InitStructure);							//将结构体变量交给NVIC_Init，配置NVIC外设
 	
 	/*USART使能*/
 	USART_Cmd(USART1, ENABLE);								//使能USART1，串口开始运行
@@ -126,6 +128,16 @@ void Serial_SendNumber(uint32_t Number, uint8_t Length)
 	}
 }
 
+uint8_t Serial_GetRxFlag(void)
+{
+	if (Serial_RxFlag == 1)			//如果标志位为1
+	{
+		Serial_RxFlag = 0;
+		return 1;					//则返回1，并自动清零标志位
+	}
+	return 0;						//如果标志位为0，则返回0
+}
+
 /**
   * 函    数：使用printf需要重定向的底层函数
   * 参    数：保持原始格式即可，无需变动
@@ -154,31 +166,6 @@ void Serial_Printf(char *format, ...)
 }
 
 /**
-  * 函    数：获取串口接收标志位
-  * 参    数：无
-  * 返 回 值：串口接收标志位，范围：0~1，接收到数据后，标志位置1，读取后标志位自动清零
-  */
-uint8_t Serial_GetRxFlag(void)
-{
-	if (Serial_RxFlag == 1)			//如果标志位为1
-	{
-		Serial_RxFlag = 0;
-		return 1;					//则返回1，并自动清零标志位
-	}
-	return 0;						//如果标志位为0，则返回0
-}
-
-/**
-  * 函    数：获取串口接收的数据
-  * 参    数：无
-  * 返 回 值：接收的数据，范围：0~255
-  */
-uint8_t Serial_GetRxData(void)
-{
-	return Serial_RxData;			//返回接收的数据变量
-}
-
-/**
   * 函    数：USART1中断函数
   * 参    数：无
   * 返 回 值：无
@@ -188,41 +175,64 @@ uint8_t Serial_GetRxData(void)
   */
 void USART1_IRQHandler(void)
 {
-	static uint8_t RxState = 0;
-	static uint8_t pRxPacket = 0;
-	if (USART_GetITStatus(USART1,USART_IT_RXNE) == SET)
+	static uint8_t RxState = 0;		//定义表示当前状态机状态的静态变量
+	static uint8_t pRxPacket = 0;	//定义表示当前接收数据位置的静态变量
+	if (USART_GetITStatus(USART1, USART_IT_RXNE) == SET)	//判断是否是USART1的接收事件触发的中断
 	{
-		uint8_t RxData = USART_ReceiveData(USART1);
+		uint8_t RxData = USART_ReceiveData(USART1);			//读取数据寄存器，存放在接收的数据变量
 		
+		/*使用状态机的思路，依次处理数据包的不同部分*/
+		
+		/*当前状态为0，接收数据包包头*/
 		if (RxState == 0)
 		{
-			if (RxData == '@' && Serial_RxFlag == 0)
+			if (RxData == '@' && Serial_RxFlag == 0)		//如果数据确实是包头，并且上一个数据包已处理完毕
 			{
-				RxState = 1;
-				pRxPacket = 0;
+				RxState = 1;			//置下一个状态
+				pRxPacket = 0;			//数据包的位置归零
 			}
 		}
+		/*当前状态为1，接收数据包数据，同时判断是否接收到了第一个包尾*/
 		else if (RxState == 1)
 		{
-			if (RxData == '\r')
+			if (RxData == '\n')			//如果收到第一个包尾
 			{
-				RxState = 2;	
+				RxState = 0;			//状态归0
+				Serial_RxPacket[pRxPacket] = '\0';			//将收到的字符数据包添加一个字符串结束标志
+				Serial_RxFlag = 1;		//接收数据包标志位置1，成功接收一个数据包
 			}
-			else
+			else						//接收到了正常的数据
 			{
-				Serial_RxPacket[pRxPacket] = RxData;
-				pRxPacket ++;
-			}
-		}
-		else if (RxState == 2)
-		{
-			if(RxData == '\n')
-			{
-				RxState = 0;
-				Serial_RxPacket[pRxPacket] = '\0';
-				Serial_RxFlag = 1;
+				Serial_RxPacket[pRxPacket] = RxData;		//将数据存入数据包数组的指定位置
+				pRxPacket ++;			//数据包的位置自增
 			}
 		}
-		USART_ClearITPendingBit(USART1,USART_IT_RXNE);
+		length=pRxPacket;
+		USART_ClearITPendingBit(USART1, USART_IT_RXNE);		//清除标志位
 	}
+}
+
+int32_t data(void)
+{
+    int32_t a = 0;
+    uint8_t start_parsing = 0;  // 标志位，是否开始解析数字
+    
+    for(int8_t i = 0; i < length; i++)
+    {
+        // 如果遇到'%'符号，设置开始解析标志
+        if (Serial_RxPacket[i] == '%') {
+            start_parsing = 1;
+            continue;  // 跳过%符号本身
+        }
+        
+        // 如果已经开始解析并且当前字符是数字
+        if (start_parsing && Serial_RxPacket[i] >= '0' && Serial_RxPacket[i] <= '9') {
+            a = a * 10 + (Serial_RxPacket[i] - '0');
+        }
+        // 如果已经开始解析但遇到非数字字符，停止解析（可选）
+//        else if (start_parsing && (Serial_RxPacket[i] < '0' || Serial_RxPacket[i] > '9')) {
+//            break;
+//        }
+    }
+    return a;
 }
