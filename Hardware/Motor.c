@@ -9,49 +9,57 @@
 void Motor_Init(void)
 {
 	/*开启时钟*/
-	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);	//开启GPIOB的时钟
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);		//开启GPIOB的时钟
 	
 	GPIO_InitTypeDef GPIO_InitStructure;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_12 | GPIO_Pin_13 | GPIO_Pin_14 | GPIO_Pin_15;
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_12 | GPIO_Pin_11;
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(GPIOB, &GPIO_InitStructure);					//将PB12和PB13引脚初始化为推挽输出
+	GPIO_Init(GPIOB, &GPIO_InitStructure);						//将PA6和PA7引脚初始化为推挽输出
+
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_15 | GPIO_Pin_10;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOB, &GPIO_InitStructure);						//将PA4和PA5引脚初始化为推挽输出		
 	
-	PWM_Init();												//初始化直流电机的底层PWM
+	GPIO_ResetBits(GPIOB,GPIO_Pin_12 | GPIO_Pin_11 | GPIO_Pin_15 | GPIO_Pin_10);
+	
+	PWM_Init();													//初始化直流电机的底层PWM
 }
 
 /**
-  * 函    数：直流电机设置PWM
-  * 参    数：PWM 要设置的PWM值，范围：-100~100（负数为反转）
+  * 函    数：直流电机设置速度
+  * 参    数：Speed 要设置的速度，范围：-100~100
   * 返 回 值：无
   */
-void Motor1_SetPWM(int8_t PWM)
+void Motor_SetSpeed1(int8_t Speed)
 {
-	if (PWM >= 0)							//如果设置正转的PWM
+	if (Speed >= 0)							//如果设置正转的速度值
 	{
-		GPIO_ResetBits(GPIOB, GPIO_Pin_12);	//PB12置低电平
-		GPIO_SetBits(GPIOB, GPIO_Pin_13);	//PB13置高电平
-		PWM_SetCompare1(PWM);				//设置PWM占空比
+		GPIO_SetBits(GPIOB, GPIO_Pin_12);	//PA4置高电平
+		GPIO_ResetBits(GPIOB, GPIO_Pin_11);	//PA5置低电平，设置方向为正转
+		PWM_SetCompare3(Speed);				//PWM设置为速度值
 	}
 	else									//否则，即设置反转的速度值
 	{
-		GPIO_SetBits(GPIOB, GPIO_Pin_12);	//PB12置高电平
-		GPIO_ResetBits(GPIOB, GPIO_Pin_13);	//PB13置低电平
-		PWM_SetCompare1(-PWM);				//设置PWM占空比
+		GPIO_ResetBits(GPIOB, GPIO_Pin_12);	//PA4置低电平
+		GPIO_SetBits(GPIOB, GPIO_Pin_11);	//PA5置高电平，设置方向为反转
+		PWM_SetCompare3(-Speed);			//PWM设置为负的速度值，因为此时速度值为负数，而PWM只能给正数
 	}
 }
-void Motor2_SetPWM(int8_t PWM)
+
+void Motor_SetSpeed2(int8_t Speed)
 {
-	if (PWM >= 0)							//如果设置正转的PWM
+	if (Speed >= 0)							//如果设置正转的速度值
 	{
-		GPIO_ResetBits(GPIOB, GPIO_Pin_15);	//PB12置低电平
-		GPIO_SetBits(GPIOB, GPIO_Pin_14);	//PB13置高电平
-		PWM_SetCompare2(PWM);				//设置PWM占空比
+		GPIO_SetBits(GPIOB, GPIO_Pin_15);	//PA4置高电平
+		GPIO_ResetBits(GPIOB, GPIO_Pin_10);	//PA5置低电平，设置方向为正转
+		PWM_SetCompare4(Speed);				//PWM设置为速度值
 	}
 	else									//否则，即设置反转的速度值
 	{
-		GPIO_SetBits(GPIOB, GPIO_Pin_15);	//PB12置高电平
-		GPIO_ResetBits(GPIOB, GPIO_Pin_14);	//PB13置低电平
-		PWM_SetCompare2(-PWM);				//设置PWM占空比
+		GPIO_ResetBits(GPIOB, GPIO_Pin_15);	//PA4置低电平
+		GPIO_SetBits(GPIOB, GPIO_Pin_10);	//PA5置高电平，设置方向为反转
+		PWM_SetCompare4(-Speed);			//PWM设置为负的速度值，因为此时速度值为负数，而PWM只能给正数
 	}
 }
